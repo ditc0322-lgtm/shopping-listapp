@@ -44,13 +44,16 @@
       opacity: 0.8;
     }
 
-    /* [Fix 1] localStorage 미지원 알림 */
-    .no-storage-banner {
-      background: #fff3cd;
-      color: #856404;
+    .error-banner {
+      background: #fdecea;
+      color: #c0392b;
       font-size: 13px;
       padding: 8px 24px;
-      border-bottom: 1px solid #ffc107;
+      border-bottom: 1px solid #e74c3c;
+      display: none;
+    }
+    .error-banner.visible {
+      display: block;
     }
 
     .input-row {
@@ -65,9 +68,7 @@
       border: 1px solid #ddd;
       border-radius: 8px;
       font-size: 15px;
-      /* [Fix 2] outline:none 제거 — :focus-visible 로 대체 */
     }
-    /* [Fix 2] 키보드 포커스 시에만 외곽선 표시 */
     .input-row input:focus-visible {
       outline: 2px solid #5b4ba8;
       outline-offset: 0;
@@ -87,7 +88,6 @@
     .input-row button:hover {
       background: #4a3d8f;
     }
-    /* [Fix 2] 모든 버튼 키보드 포커스 스타일 */
     button:focus-visible {
       outline: 2px solid #5b4ba8;
       outline-offset: 2px;
@@ -114,7 +114,6 @@
       accent-color: #5b4ba8;
       flex-shrink: 0;
     }
-    /* [Fix 4] label 요소도 동일한 스타일 적용 */
     li.item label.label {
       flex: 1;
       font-size: 16px;
@@ -142,6 +141,12 @@
     .empty {
       text-align: center;
       color: #bbb;
+      padding: 32px 24px;
+      font-size: 14px;
+    }
+    .loading {
+      text-align: center;
+      color: #999;
       padding: 32px 24px;
       font-size: 14px;
     }
@@ -173,10 +178,7 @@
       <p>장 볼 항목을 추가하고 체크하세요</p>
     </header>
 
-    <!-- [Fix 1] localStorage 미지원 안내 (JS에서 조건부 표시) -->
-    <div class="no-storage-banner" id="noStorageBanner" hidden>
-      저장 기능을 사용할 수 없습니다 (사생활 보호 모드). 목록이 유지되지 않습니다.
-    </div>
+    <div class="error-banner" id="errorBanner"></div>
 
     <div class="input-row">
       <input id="itemInput" type="text" placeholder="예: 우유, 계란..." autocomplete="off" />
@@ -191,44 +193,43 @@
     </footer>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script>
-    // [Fix 1] MDN 권고 방식의 localStorage 가용성 검사
-    function storageAvailable() {
-      try {
-        const x = "__storage_test__";
-        localStorage.setItem(x, x);
-        localStorage.removeItem(x);
-        return true;
-      } catch (e) {
-        return (
-          e instanceof DOMException &&
-          e.name === "QuotaExceededError" &&
-          localStorage &&
-          localStorage.length !== 0
-        );
-      }
-    }
+    const SUPABASE_URL = "https://lrijospinxtxopsokcqs.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxyaWpvc3Bpbnh0eG9wc29rY3FzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3ODE4NjMsImV4cCI6MjA5ODM1Nzg2M30.7BeWyDR6wcPtlpXLeymgJxpqIze3nNdTNXF2GOuBA_s";
 
-    const canStore = storageAvailable();
-    if (!canStore) {
-      document.getElementById("noStorageBanner").hidden = false;
-    }
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const STORAGE_KEY = "shopping-list-items";
-    let items = canStore
-      ? JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")
-      : [];
-
-    const listEl = document.getElementById("list");
-    const inputEl = document.getElementById("itemInput");
-    const addBtn = document.getElementById("addBtn");
+    const listEl   = document.getElementById("list");
+    const inputEl  = document.getElementById("itemInput");
+    const addBtn   = document.getElementById("addBtn");
     const clearBtn = document.getElementById("clearBtn");
-    const countEl = document.getElementById("count");
+    const countEl  = document.getElementById("count");
+    const errorBanner = document.getElementById("errorBanner");
 
-    function save() {
-      if (canStore) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-      }
+    let items = [];
+
+    function showError(msg) {
+      errorBanner.textContent = msg;
+      errorBanner.classList.add("visible");
+    }
+
+    function hideError() {
+      errorBanner.classList.remove("visible");
+    }
+
+    async function loadItems() {
+      listEl.innerHTML = '<div class="loading">불러오는 중...</div>';
+      const { data, error } = await db
+        .from("shopping_items")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) { showError("데이터를 불러오지 못했습니다: " + error.message); return; }
+      hideError();
+      items = data;
+      render();
     }
 
     function render() {
@@ -244,16 +245,14 @@
           const li = document.createElement("li");
           li.className = "item" + (item.checked ? " checked" : "");
 
-          // [Fix 4] checkbox에 고유 id 부여
           const checkboxId = `item-${item.id}`;
 
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.id = checkboxId;
           checkbox.checked = item.checked;
-          checkbox.addEventListener("change", () => toggle(item.id));
+          checkbox.addEventListener("change", () => toggle(item.id, !item.checked));
 
-          // [Fix 4] <span> → <label for="..."> 로 교체해 체크박스와 연결
           const label = document.createElement("label");
           label.htmlFor = checkboxId;
           label.className = "label";
@@ -262,7 +261,6 @@
           const del = document.createElement("button");
           del.className = "delete";
           del.textContent = "✕";
-          // [Fix 5] 스크린 리더용 aria-label 추가
           del.setAttribute("aria-label", `${item.text} 삭제`);
           del.addEventListener("click", () => remove(item.id));
 
@@ -277,27 +275,48 @@
       countEl.textContent = `${items.length}개 항목 · ${remaining}개 남음`;
     }
 
-    function addItem() {
+    async function addItem() {
       const text = inputEl.value.trim();
       if (!text) return;
-      // [Fix 3] Date.now() + Math.random() → crypto.randomUUID()
-      items.push({ id: crypto.randomUUID(), text, checked: false });
+
+      addBtn.disabled = true;
+      const { data, error } = await db
+        .from("shopping_items")
+        .insert({ text, checked: false })
+        .select()
+        .single();
+
+      addBtn.disabled = false;
+      if (error) { showError("추가 실패: " + error.message); return; }
+      hideError();
+      items.push(data);
       inputEl.value = "";
       inputEl.focus();
-      save();
       render();
     }
 
-    function toggle(id) {
+    async function toggle(id, newChecked) {
+      const { error } = await db
+        .from("shopping_items")
+        .update({ checked: newChecked })
+        .eq("id", id);
+
+      if (error) { showError("업데이트 실패: " + error.message); return; }
+      hideError();
       const item = items.find((i) => i.id === id);
-      if (item) item.checked = !item.checked;
-      save();
+      if (item) item.checked = newChecked;
       render();
     }
 
-    function remove(id) {
+    async function remove(id) {
+      const { error } = await db
+        .from("shopping_items")
+        .delete()
+        .eq("id", id);
+
+      if (error) { showError("삭제 실패: " + error.message); return; }
+      hideError();
       items = items.filter((i) => i.id !== id);
-      save();
       render();
     }
 
@@ -305,15 +324,21 @@
     inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") addItem();
     });
-    clearBtn.addEventListener("click", () => {
-      if (items.length && confirm("모든 항목을 삭제할까요?")) {
-        items = [];
-        save();
-        render();
-      }
+    clearBtn.addEventListener("click", async () => {
+      if (!items.length || !confirm("모든 항목을 삭제할까요?")) return;
+
+      const { error } = await db
+        .from("shopping_items")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+
+      if (error) { showError("전체 삭제 실패: " + error.message); return; }
+      hideError();
+      items = [];
+      render();
     });
 
-    render();
+    loadItems();
   </script>
 </body>
 </html>
